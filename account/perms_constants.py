@@ -1,0 +1,14 @@
+
+MANAGER_NAME = 'Manager'
+ADMIN_NAME = 'Admin'
+
+MANAGER = ((MANAGER_NAME, 'Manages the Library'),)
+ADMIN = ((ADMIN_NAME, 'Administers the Library and the manager'),)
+
+PERM_CHOICES = (
+    (MANAGER_NAME, MANAGER_NAME),
+    (ADMIN_NAME, ADMIN_NAME),
+)
+USER_PERMS_NAMES = [MANAGER_NAME, ADMIN_NAME]
+
+PERMS_CONSTANT_LIST = [MANAGER, ADMIN]

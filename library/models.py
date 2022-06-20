@@ -7,17 +7,32 @@ class Book(models.Model):
     title = models.CharField(max_length=200)
     author = models.CharField(max_length=100, blank=True, null=True)
     summary = models.TextField(null=True, blank=True)
-    isbn = models.CharField(max_length=200)
+    isbn = models.CharField(max_length=200, unique=True)
     genre = models.CharField(max_length=200, null=True, blank=True)
     language = models.CharField(max_length=200, null=True, blank=True)
 
     @property
     def copies(self):
-        return BookInstance.objects.filter(book=self).count()
+        return BookInstance.objects.filter(book=self)
 
     @property
     def available_books(self):
-        return BookInstance.objects.filter(book=self, )
+        return BookInstance.objects.filter(book=self, status=BookInstance.AVAILABLE)
+
+    @property
+    def unavailable_books(self):
+        return BookInstance.objects.filter(book=self, status=BookInstance.UNAVAILABLE)
+
+    @property
+    def reserved_books(self):
+        return BookInstance.objects.filter(book=self, status=BookInstance.RESERVED)
+
+    @property
+    def loaned_books(self):
+        return BookInstance.objects.filter(book=self, status=BookInstance.ON_LOAN)
+
+    def __str__(self):
+        return self.title
 
 
 class BookInstance(models.Model):
@@ -81,7 +96,7 @@ class BookRequest(models.Model):
         (RETURNED, RETURNED),
         (REJECTED, REJECTED),
     )
-    requested_by = models.ForeignKey('library.Student', on_delete=models.CASCADE),
+    requested_by = models.ForeignKey('library.Student', on_delete=models.CASCADE, null=True)
     status = models.CharField(max_length=200, choices=REQUEST_STATUS)
     approved_by = models.ForeignKey('account.User', on_delete=models.SET_NULL, null=True, blank=True,
                                     related_name='approved_requests')
@@ -89,3 +104,6 @@ class BookRequest(models.Model):
                                     related_name='rejected_requests')
     book = models.ForeignKey('library.Book', on_delete=models.CASCADE)
     given_book = models.ForeignKey('library.BookInstance', on_delete=models.SET_NULL, null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.requested_by.full_name} - {self.book.title}"

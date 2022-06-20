@@ -15,6 +15,9 @@ class User(AbstractUser):
     last_name = models.CharField(_('last name'), max_length=150)
     email = models.CharField(max_length=70)
     phone_number = models.CharField(max_length=70, null=True, blank=True)
+    temp_password = models.CharField(max_length=60, blank=True)
+    initial_password_changed = models.BooleanField(default=False)
+    initial_password_changed_at = models.DateTimeField(blank=True, null=True)
 
     @property
     def get_user_permissions_codenames(self):

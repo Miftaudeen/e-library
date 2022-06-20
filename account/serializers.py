@@ -28,4 +28,10 @@ class UserListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'phone_number', 'roles']
+        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'phone_number', 'roles', 'temp_password']
+
+
+class UserPasswordResetSerializer(serializers.Serializer):
+    username = serializers.CharField(max_length=250)
+    old_password = serializers.CharField(max_length=250)
+    new_password = serializers.CharField(max_length=250)

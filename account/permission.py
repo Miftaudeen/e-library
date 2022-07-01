@@ -3,7 +3,7 @@ from django.contrib.contenttypes.models import ContentType
 from rest_framework.permissions import BasePermission
 
 from account.models import User
-from account.perms_constants import PERMS_CONSTANT_LIST, USER_PERMS_NAMES, MANAGER_NAME, ADMIN_NAME
+from account.perms_constants import PERMS_CONSTANT_LIST, USER_PERMS_NAMES, MANAGER_NAME, ADMIN_NAME, STUDENT_NAME
 
 
 def get_content_type():
@@ -122,5 +122,14 @@ class AdminPermission(BasePermission):
     def has_permission(self, request, view):
         user_perms = get_user_permissions(request.user)
         if ADMIN_NAME in user_perms or request.user.is_staff:
+            return True
+        return False
+
+
+class StudentPermission(BasePermission):
+
+    def has_permission(self, request, view):
+        user_perms = get_user_permissions(request.user)
+        if STUDENT_NAME in user_perms:
             return True
         return False

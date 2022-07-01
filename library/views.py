@@ -1,13 +1,18 @@
-from django.shortcuts import render
+from datetime import datetime
+from os import getenv
+
+from dateutil.relativedelta import relativedelta
 from rest_framework import status
+from rest_framework.filters import OrderingFilter
 from rest_framework.generics import CreateAPIView, ListAPIView, UpdateAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from account.permission import ManagerPermission, AdminPermission
-from library.models import Book, Student, BookRequest, BookInstance
+from account.permission import ManagerPermission, AdminPermission, StudentPermission
+from library.models import Book, Student, BookRequest
 from library.serializers import BookSerializer, BookListSerializer, StudentListSerializer, BookRequestSerializer, \
-    BookRequestListSerializer, BookRequestReviewSerializer, StudentReviewSerializer, BookReviewSerializer
+    BookRequestListSerializer, BookRequestReviewSerializer, StudentReviewSerializer, BookReviewSerializer, \
+    BookReturnSerializer
 
 
 class AddBook(CreateAPIView):
@@ -29,16 +34,52 @@ class AddBook(CreateAPIView):
 class RequestBookView(CreateAPIView):
     model = BookRequest
     serializer_class = BookRequestSerializer
-    permission_classes = [IsAuthenticated, ManagerPermission]
+    permission_classes = [IsAuthenticated, StudentPermission]
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
-            book = serializer.save()
+            student = request.user.student
+            given_book = BookRequest.objects.filter(requested_by=student, status=BookRequest.APPROVED)
+            if given_book.exists():
+                return Response({"message": "Cannot Request Book", "responseCode": "103",
+                                 "errors": f"You cannot request book because you have not returned {given_book.first().book.title }"},
+                                status=status.HTTP_200_OK)
+
+            pending_request = BookRequest.objects.filter(requested_by=student, status=BookRequest.PENDING)
+            if pending_request.exists():
+                return Response({"message": "Cannot Request Book", "responseCode": "103",
+                                 "errors": f"You cannot request book because you have requested {pending_request.first().book.title }"},
+                                status=status.HTTP_200_OK)
+
+            book = serializer.save(student)
+            book.status = Book.RESERVED
+            book.save()
             serializer = BookRequestListSerializer(instance=book)
             return Response({"message": "Book Requested Successfully", "responseCode": "100", "data": serializer.data},
                             status=status.HTTP_200_OK)
         return Response({"message": "Error Requesting Book", "responseCode": "101",
+                         "errors": serializer.errors}, status=status.HTTP_200_OK)
+
+
+class ReturnBookView(CreateAPIView):
+    model = BookRequest
+    serializer_class = BookReturnSerializer
+    permission_classes = [IsAuthenticated, StudentPermission]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            book_request = serializer.validated_data.get('book_request')
+            book_request.status = BookRequest.RETURNED
+            book_request.save()
+            book = book_request.book
+            book.status = Book.AVAILABLE
+            book.save()
+            serializer = BookRequestListSerializer(instance=book)
+            return Response({"message": "Book Returned Successfully", "responseCode": "100", "data": serializer.data},
+                            status=status.HTTP_200_OK)
+        return Response({"message": "Error Returning Book", "responseCode": "101",
                          "errors": serializer.errors}, status=status.HTTP_200_OK)
 
 
@@ -59,14 +100,17 @@ class ReviewBookRequestView(UpdateAPIView):
                                      "errors": "You can only approve a pending book request"},
                                     status=status.HTTP_200_OK)
                 book = book_request.book
-                if book.available_books.exists():
-                    available_book = book.available_books.first()
-                    available_book.status = BookInstance.ON_LOAN
-                    available_book.due_date = serializer.validated_data.get('due_date')
-                    available_book.save()
-                    book_request.given_book = available_book
+                if book.status == Book.RESERVED:
+                    book.status = Book.ON_LOAN
+                    book.due_date = (datetime.now() + relativedelta(hours=getenv('due', 72))).date()
+                    book.save()
                     book_request.approved_by = user
                     book_request.status = request_status
+                    pending_requests = BookRequest.objects.filter(book=book, status=BookRequest.PENDING)
+                    for pending_request in pending_requests:
+                        pending_request.status = BookRequest.REJECTED
+                        pending_request.rejected_by = user
+                        pending_request.save()
                 else:
                     return Response({"message": f"Book is no longer Available", "responseCode": "103",
                                      "errors": f"{book_request.book} is no longer available"},
@@ -79,18 +123,9 @@ class ReviewBookRequestView(UpdateAPIView):
                                     status=status.HTTP_200_OK)
                 book_request.rejected_by = user
                 book_request.status = request_status
-            elif request_status == BookRequest.RETURNED:
-                if book_request.status != BookRequest.APPROVED:
-                    return Response({"message": f"You cannot return {book_request.status} book request", "responseCode": "103",
-                                     "errors": "You can only return an approved book request"},
-                                    status=status.HTTP_200_OK)
-                given_book = book_request.given_book
-                given_book.status = BookInstance.AVAILABLE
-                given_book.save()
-                book_request.status = request_status
             else:
                 return Response({"message": "Invalid Status Selected", "responseCode": "103",
-                                 "errors": "You can only approve, reject or return a book"}, status=status.HTTP_200_OK)
+                                 "errors": "You can only approve or reject a book request"}, status=status.HTTP_200_OK)
             book_request.save()
             serializer = BookRequestListSerializer(instance=book_request)
             return Response({"message": f"Book {request_status} Successfully", "responseCode": "100", "data": serializer.data},
@@ -136,7 +171,6 @@ class ReviewStudentStatusView(UpdateAPIView):
                          "errors": serializer.errors}, status=status.HTTP_200_OK)
 
 
-
 class ReviewBookStatusView(UpdateAPIView):
     model = Book
     serializer_class = BookReviewSerializer
@@ -144,26 +178,23 @@ class ReviewBookStatusView(UpdateAPIView):
 
     def update(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
-        user = request.user
         if serializer.is_valid():
             book = serializer.validated_data.get('book')
             book_status = serializer.validated_data.get('status')
-            if book_status == BookInstance.AVAILABLE:
-                if book.unavailable_books.count() <= 0:
+            if book_status == Book.AVAILABLE:
+                if book.status != Book.UNAVAILABLE:
                     return Response({"message": f"You don't have any unavailable book", "responseCode": "103",
-                                     "errors": "You can only make available unavailable books"},
+                                     "errors": "You can only make available, an  unavailable book"},
                                     status=status.HTTP_200_OK)
-                for book_copy in book.unavailable_books:
-                    book_copy.status = BookInstance.AVAILABLE
-                    book_copy.save()
-            elif book_status == BookInstance.UNAVAILABLE:
-                if book.available_books.count() <= 0:
+                book.status = Book.AVAILABLE
+                book.save()
+            elif book.status == Book.UNAVAILABLE:
+                if book.status != Book.AVAILABLE:
                     return Response({"message": f"You don't have any available book", "responseCode": "103",
-                                     "errors": "You can only make unavailable available books"},
+                                     "errors": "You can only make unavailable, an available book"},
                                     status=status.HTTP_200_OK)
-                for book_copy in book.available_books:
-                    book_copy.status = BookInstance.UNAVAILABLE
-                    book_copy.save()
+                book.status = Book.UNAVAILABLE
+                book.save()
             else:
                 return Response({"message": "Invalid Status Selected", "responseCode": "103",
                                  "errors": "You can only make a book available or unavailable"}, status=status.HTTP_200_OK)
@@ -176,9 +207,50 @@ class ReviewBookStatusView(UpdateAPIView):
 
 class StudentApiListView(ListAPIView):
     permission_classes = [IsAuthenticated, AdminPermission]
+    filter_backends = [OrderingFilter]
 
     def list(self, request, *args, **kwargs):
         students = Student.objects.all()
+        status = request.GET.get('status')
+        if status:
+            students = students.filter(status=status)
         serializer = StudentListSerializer(students, many=True)
         return Response({"message": "Student List", "responseCode": "100", "data": serializer.data},
+                        status=status.HTTP_200_OK)
+
+
+class BookApiListView(ListAPIView):
+    permission_classes = [IsAuthenticated, AdminPermission]
+    filter_backends = [OrderingFilter]
+
+    def list(self, request, *args, **kwargs):
+        books = Book.objects.all()
+        status = request.GET.get('status')
+        if status:
+            books = books.filter(status__iexact=status)
+        serializer =BookListSerializer(books, many=True)
+        return Response({"message": "Book List", "responseCode": "100", "data": serializer.data},
+                        status=status.HTTP_200_OK)
+
+
+class BookSearchListView(ListAPIView):
+    permission_classes = [IsAuthenticated, StudentPermission]
+    filter_backends = [OrderingFilter]
+
+    def list(self, request, *args, **kwargs):
+        books = Book.objects.filter(status=Book.AVAILABLE)
+        name = request.GET.get('name')
+        if name:
+            books = books.filter(title__icontains=name)
+        author = request.GET.get('author')
+        if author:
+            books = books.filter(author__icontains=author)
+        category = request.GET.get('category')
+        if category:
+            books = books.filter(category__icontains=category)
+        year_published = request.GET.get('year_published')
+        if year_published:
+            books = books.filter(year_published=year_published)
+        serializer =BookListSerializer(books, many=True)
+        return Response({"message": "Book List", "responseCode": "100", "data": serializer.data},
                         status=status.HTTP_200_OK)

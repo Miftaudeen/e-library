@@ -1,0 +1,57 @@
+version: "3.9"
+volumes:
+  redis_default_data:
+
+services:
+  db:
+    image: postgres
+    volumes:
+      - ./data/db:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+  web:
+    build: .
+    command: python manage.py runserver localhost:8000
+    volumes:
+      - .:/home/app/
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+
+  redis_server:
+    restart: always
+    image: "redis:6-alpine"
+    container_name: elibrary-redis-server
+    environment:
+      - ALLOW_EMPTY_PASSWORD=yes
+    volumes:
+      - redis_default_data:/bitnami/redis/data
+    ports:
+      - 6379:6379
+
+  celery_worker:
+    restart: on-failure
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: elibrary_celery_worker
+    volumes:
+      - ./.env:/home/app/.env
+    command: celery -A elibrary worker --loglevel=INFO --concurrency=4
+    depends_on:
+      - redis_server
+
+  celery_beat:
+    restart: on-failure
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: elibrary_celery_beat
+    volumes:
+      - ./.env:/home/app/.env
+    command: celery -A elibrary beat -l info
+    depends_on:
+      - redis_server

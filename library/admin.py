@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from library.models import Student, Book, BookInstance, BookRequest
+from library.models import Student, Book, BookRequest
 
 
 @admin.register(Student)
@@ -11,17 +11,11 @@ class StudentAdmin(admin.ModelAdmin):
 
 @admin.register(Book)
 class BookAdmin(admin.ModelAdmin):
-    list_display = ['id', 'title', 'author', 'isbn', 'summary', 'language', 'genre', 'copies']
-    search_fields = ['title', 'author', 'genre']
-
-
-@admin.register(BookInstance)
-class BookInstanceAdmin(admin.ModelAdmin):
-    list_display = ['id', 'status', 'due_date', 'book']
-    search_fields = ['status', 'book__title', 'book__genre']
+    list_display = ['id', 'title', 'author', 'isbn', 'summary', 'language', 'category', 'status', 'due_date', ]
+    search_fields = ['title', 'author', 'category']
 
 
 @admin.register(BookRequest)
 class BookRequestAdmin(admin.ModelAdmin):
-    list_display = ['id', 'book', 'requested_by', 'status', 'approved_by', 'rejected_by', 'given_book']
-    search_fields = ['status', 'book__title', 'book__genre']
+    list_display = ['id', 'book', 'requested_by', 'status', 'approved_by', 'rejected_by']
+    search_fields = ['status', 'book__title', 'book__category']

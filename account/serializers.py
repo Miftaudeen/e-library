@@ -7,10 +7,11 @@ from account.perms_constants import PERM_CHOICES
 
 class UserSerializer(serializers.ModelSerializer):
     role = serializers.ChoiceField(required=True, choices=PERM_CHOICES)
+    username = serializers.CharField(max_length=60, allow_null=True, allow_blank=True, required=False)
 
     class Meta:
         model = User
-        fields = ['first_name', 'last_name', 'email', 'phone_number', 'role']
+        fields = ['username', 'first_name', 'last_name', 'email', 'phone_number', 'role']
 
     def save(self, username):
         user, _ = User.objects.update_or_create(
@@ -21,6 +22,23 @@ class UserSerializer(serializers.ModelSerializer):
                                        'phone_number': self.validated_data.get('phone_number'),
                                        'username': username
                                    })
+        return user
+
+
+class StudentUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['first_name', 'last_name', 'email', 'phone_number', 'username']
+
+    def save(self):
+        user, _ = User.objects.update_or_create(
+            email=self.validated_data.get('email'),
+            defaults={
+                'first_name': self.validated_data.get('first_name'),
+                'last_name': self.validated_data.get('last_name'),
+                'phone_number': self.validated_data.get('phone_number'),
+                'username': self.validated_data.get('username')
+            })
         return user
 
 

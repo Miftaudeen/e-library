@@ -3,22 +3,23 @@ from django.contrib.auth.models import Permission
 from django.contrib.auth.password_validation import validate_password
 from django.shortcuts import render
 from rest_framework import status
-from rest_framework.authtoken.models import Token
-from rest_framework.authtoken.serializers import AuthTokenSerializer
-from rest_framework.authtoken.views import ObtainAuthToken
 from rest_framework.decorators import api_view
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import CreateAPIView, get_object_or_404, ListAPIView
 # Create your views here.
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.views import APIView
+from rest_framework_simplejwt.serializers import TokenObtainSerializer, TokenObtainPairSerializer
+from rest_framework_simplejwt.tokens import Token, RefreshToken
+from rest_framework_simplejwt.views import TokenObtainPairView
 
 from account.models import User
 from account.permission import get_as_perm, get_permission, AdminPermission, get_user_permissions
-from account.perms_constants import ADMIN_NAME, USER_PERMS_NAMES, MANAGER_NAME
-from account.serializers import UserSerializer, UserListSerializer, UserPasswordResetSerializer
-from utils.utility import generate_username, generate_digits
+from account.perms_constants import ADMIN_NAME, USER_PERMS_NAMES, MANAGER_NAME, STUDENT_NAME
+from account.serializers import UserSerializer, UserListSerializer, UserPasswordResetSerializer, StudentUserSerializer
+from library.models import Student
+from library.serializers import StudentListSerializer
+from utils.utility import generate_username, generate_digits, generate_matric_num
 
 
 class AddUser(CreateAPIView):
@@ -121,37 +122,65 @@ class ChangePasswordAPIView(CreateAPIView):
                         status=status.HTTP_201_CREATED)
 
 
-
-def custom_jwt_response_payload_handler(token, user=None, request=None):
+def custom_jwt_response_payload_handler(refresh, user=None, request=None):
     user_perms = get_user_permissions(user)
 
     return {"username": user.username, "user_id": user.id, 'permissions': user_perms,
-            "token": token,
+            "refresh": refresh.get('refresh'),
+            "access": refresh.get('access'),
             'initial_password_changed': user.initial_password_changed,
             'responseCode': '100', 'message': 'Authentication successfully'}
 
 
-class CustomAuthToken(ObtainAuthToken):
-    serializer_class = AuthTokenSerializer
+class CustomAuthToken(TokenObtainPairView):
+    serializer_class = TokenObtainPairSerializer
 
     def post(self, request, *args, **kwargs):
-        ref_id = generate_digits(15)
         data = request.data
 
         # changes the username to lower because username is case insensitive, and are stored in lower case
         serializer = self.get_serializer(data={'username': data.get('username'),
                                                'password': data.get('password')})
 
-        if serializer.is_valid():
-            user = serializer.validated_data.get('user') or request.user
-            token = Token.objects.filter(user=user).first().key
-            response_data = custom_jwt_response_payload_handler(token, user)
+        if serializer.validate(attrs={'username': data.get('username'),
+                                               'password': data.get('password')}):
 
-            # message = f"You have been successfully logged in"
+            user = User.objects.filter(username=data.get('username')).first()
+            refresh = serializer.get_token(user)
+            res = {
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+            }
+            response_data = custom_jwt_response_payload_handler(res, user)
 
-            # send_push_notification(message, "App Login", receivers=[user])
+            if STUDENT_NAME in get_user_permissions(user):
+                student = user.student
+                if student and student.status == Student.SUSPENDED:
+                    return Response({"message": "Authentication Error", "responseCode": "103",
+                                     "errors": "You have been suspended"}, status=status.HTTP_200_OK)
 
             return Response(response_data, status=status.HTTP_200_OK)
         return Response({"message": "Authentication Error", "responseCode": "101",
                          "errors": serializer.errors}, status=status.HTTP_200_OK)
 
+
+class StudentSignUpApiView(CreateAPIView):
+    model = User
+    serializer_class = StudentUserSerializer
+    permission_classes = []
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            user = serializer.save()
+            user.user_permissions.add(get_permission(STUDENT_NAME))
+            temp_password = f'{user.first_name}{generate_digits(5)}'
+            user.set_password(temp_password)
+            user.temp_password = temp_password
+            user.save()
+            student = Student.objects.create(matric_num=generate_matric_num(), user=user)
+            serializer = StudentListSerializer(instance=student)
+            return Response({"message": "Sign Up Successful", "responseCode": "100", "data": serializer.data},
+                            status=status.HTTP_200_OK)
+        return Response({"message": "Sign Up Error", "responseCode": "101",
+                         "errors": serializer.errors}, status=status.HTTP_200_OK)
